@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Coco Music">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <meta name="theme-color" content="#000000">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiQ29jbyBNdXNpYyIsInNob3J0X25hbWUiOiJDb2NvIE11c2ljIiwiZGVzY3JpcHRpb24iOiJMZWN0ZXVyIG11c2ljYWwgcGVyc29ubmVsIiwic3RhcnRfdXJsIjoiLi9pbmRleGFwcG11c2lxdWUuaHRtbCIsImRpc3BsYXkiOiJzdGFuZGFsb25lIiwib3JpZW50YXRpb24iOiJwb3J0cmFpdCIsImJhY2tncm91bmRfY29sb3IiOiIjMDkwOTA5IiwidGhlbWVfY29sb3IiOiIjMDkwOTA5IiwiaWNvbnMiOlt7InNyYyI6ImRhdGE6aW1hZ2Uvc3ZnK3htbCxcdTAwM2NzdmcgeG1sbnM9XHUwMDI3aHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmdcdTAwMjcgdmlld0JveD1cdTAwMjcwIDAgMTAwIDEwMFx1MDAyN1x1MDAzZVx1MDAzY3JlY3Qgd2lkdGg9XHUwMDI3MTAwXHUwMDI3IGhlaWdodD1cdTAwMjcxMDBcdTAwMjcgcng9XHUwMDI3MjBcdTAwMjcgZmlsbD1cdTAwMjclMjNmYzNjNDRcdTAwMjcvXHUwMDNlXHUwMDNjdGV4dCB4PVx1MDAyNzUwXHUwMDI3IHk9XHUwMDI3NjhcdTAwMjcgZm9udC1zaXplPVx1MDAyNzUwXHUwMDI3IHRleHQtYW5jaG9yPVx1MDAyN21pZGRsZVx1MDAyNyBmaWxsPVx1MDAyN3doaXRlXHUwMDI3XHUwMDNl4pmqXHUwMDNjL3RleHRcdTAwM2VcdTAwM2Mvc3ZnXHUwMDNlIiwic2l6ZXMiOiIxOTJ4MTkyIiwidHlwZSI6ImltYWdlL3N2Zyt4bWwifSx7InNyYyI6ImRhdGE6aW1hZ2Uvc3ZnK3htbCxcdTAwM2NzdmcgeG1sbnM9XHUwMDI3aHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmdcdTAwMjcgdmlld0JveD1cdTAwMjcwIDAgMTAwIDEwMFx1MDAyN1x1MDAzZVx1MDAzY3JlY3Qgd2lkdGg9XHUwMDI3MTAwXHUwMDI3IGhlaWdodD1cdTAwMjcxMDBcdTAwMjcgcng9XHUwMDI3MjBcdTAwMjcgZmlsbD1cdTAwMjclMjNmYzNjNDRcdTAwMjcvXHUwMDNlXHUwMDNjdGV4dCB4PVx1MDAyNzUwXHUwMDI3IHk9XHUwMDI3NjhcdTAwMjcgZm9udC1zaXplPVx1MDAyNzUwXHUwMDI3IHRleHQtYW5jaG9yPVx1MDAyN21pZGRsZVx1MDAyNyBmaWxsPVx1MDAyN3doaXRlXHUwMDI3XHUwMDNl4pmqXHUwMDNjL3RleHRcdTAwM2VcdTAwM2Mvc3ZnXHUwMDNlIiwic2l6ZXMiOiI1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3N2Zyt4bWwifV0sImlkIjoiL2NvY28tbXVzaWMifQ==">
@@ -1409,10 +1410,7 @@ body {
           </div>
           <div class="section" style="padding:0;margin-bottom:20px">
             <div class="section-hd"><div class="section-title">⚙️ Lecture</div></div>
-            <div class="eq-toggle-row" style="padding:0 0 8px">
-              <span class="eq-toggle-label">CrossFade (transition douce 5s)</span>
-              <label class="toggle"><input type="checkbox" id="xfade-toggle"><span class="tslider"></span></label>
-            </div>
+
             <div class="eq-toggle-row" style="padding:0 0 8px">
               <span class="eq-toggle-label">Son spatial (simulation)</span>
               <label class="toggle"><input type="checkbox" id="spatial-toggle"><span class="tslider"></span></label>
@@ -1779,7 +1777,8 @@ async function playById(trackId, resetQ=true) {
   // Cancel any pending nextTrack timeout
   if (_nextTrackTimer) { clearTimeout(_nextTrackTimer); _nextTrackTimer = null; }
   // Reset crossfade state on any track change
-  _xfFading = false; xfadeTimeout = null;
+  if(_xfTimer){clearInterval(_xfTimer);_xfTimer=null;} _xfFading=false; xfadeTimeout=null;
+  try{audio.volume=1;}catch(e){}
   // Track listen time for previous track before switching
   if (currentIdx >= 0 && library[currentIdx]) _trackListenTime(library[currentIdx].id);
   // Generation counter — if another playById is called while we're async, abort
@@ -1829,8 +1828,6 @@ async function playById(trackId, resetQ=true) {
 
   if (resetQ) buildQueue(trackId);
   currentIdx = idx;
-
-  if (xfadeTimeout) { clearTimeout(xfadeTimeout); xfadeTimeout=null; }
 
   audio.src = audioURL;
   audio.load(); // Force reload (fixes same-URL restart on iOS)
@@ -1920,7 +1917,7 @@ function nextTrack() {
     _trackSkip(library[currentIdx].id);
   }
   if (repeatMode===2) { audio.currentTime=0; audio.play().catch(()=>{}); return; }
-  if (xfadeTimeout) { clearTimeout(xfadeTimeout); xfadeTimeout=null; }
+  if(_xfTimer){clearInterval(_xfTimer);_xfTimer=null;} xfadeTimeout=null;
   if (queue.length===0) { isAdvancing=false; return; }
   if (queueIdx < queue.length-1) {
     queueIdx++;
@@ -1945,7 +1942,7 @@ function prevTrack() {
   isAdvancing=true;
   setTimeout(()=>{isAdvancing=false;},800);
   if (audio.currentTime>3) { audio.currentTime=0; return; }
-  if (xfadeTimeout) { clearTimeout(xfadeTimeout); xfadeTimeout=null; }
+  if(_xfTimer){clearInterval(_xfTimer);_xfTimer=null;} _xfFading=false; xfadeTimeout=null;
   if (queueIdx>0) {
     queueIdx--;
     const trackId = queue[queueIdx];
@@ -1993,68 +1990,53 @@ function toggleCrossfade() {
   isCrossfade = !isCrossfade;
   const btn = $('fp-xfade');
   if (btn) btn.classList.toggle('lit', isCrossfade);
-  toast(isCrossfade ? '🔊 CrossFade activé (5s)' : '🔇 CrossFade désactivé');
+  toast(isCrossfade ? '🔊 CrossFade activé' : '🔇 CrossFade désactivé');
   savePref();
 }
-// CrossFade state
+// CrossFade — simple volume fade using setInterval (reliable on iOS)
 let _xfFading = false;
-let _xfSavedVol = 1;
-let _xfFadeInActive = false;
-// Called from timeupdate event — most reliable on iOS
+let _xfTimer = null;
 function _xfadeCheck() {
   if (!isCrossfade || !isPlaying || _xfFading) return;
-  if (!audio.duration || isNaN(audio.duration) || audio.duration < XFADE + 2) return;
+  if (!audio.duration || isNaN(audio.duration) || audio.duration < 8) return;
   const remaining = audio.duration - audio.currentTime;
-  if (remaining <= XFADE && remaining > 0.3) {
-    // Check if there's a next track to go to
+  if (remaining <= XFADE && remaining > 0.5) {
     if (queue.length === 0) return;
     if (queueIdx >= queue.length - 1 && repeatMode !== 1) return;
-    _startFadeOut();
+    _xfFading = true;
+    xfadeTimeout = 'active';
+    // Fade out over remaining time using setInterval (50ms ticks)
+    const steps = Math.floor((remaining * 1000) / 50);
+    let step = 0;
+    _xfTimer = setInterval(() => {
+      step++;
+      const vol = Math.max(0, 1 - (step / steps));
+      try { audio.volume = vol; } catch(e){}
+      if (step >= steps) {
+        clearInterval(_xfTimer); _xfTimer = null;
+        try { audio.volume = 1; } catch(e){}
+        _xfFading = false;
+        xfadeTimeout = 'done';
+        nextTrack();
+        // Fade in on new track
+        _xfDoFadeIn();
+      }
+    }, 50);
   }
 }
-function _startFadeOut() {
-  _xfFading = true;
-  _xfSavedVol = audio.volume;
-  const startTime = performance.now();
-  const duration = XFADE * 1000; // 5000ms
-  function fade() {
-    const elapsed = performance.now() - startTime;
-    const progress = Math.min(1, elapsed / duration);
-    // Ease-out curve for smoother fade
-    audio.volume = _xfSavedVol * (1 - progress * progress);
-    if (progress < 1) {
-      requestAnimationFrame(fade);
-    } else {
-      // Fade complete — advance
-      audio.volume = _xfSavedVol;
-      _xfFading = false;
-      _xfFadeInActive = true;
-      xfadeTimeout = 'done';
-      nextTrack();
-    }
-  }
-  requestAnimationFrame(fade);
+function _xfDoFadeIn() {
+  let step = 0;
+  const steps = 30; // 1.5s at 50ms intervals
+  try { audio.volume = 0; } catch(e){}
+  const timer = setInterval(() => {
+    step++;
+    try { audio.volume = Math.min(1, step / steps); } catch(e){}
+    if (step >= steps) { clearInterval(timer); try{audio.volume=1;}catch(e){} xfadeTimeout=null; }
+  }, 50);
 }
 function _doFadeIn() {
-  if (!_xfFadeInActive) return;
-  _xfFadeInActive = false;
-  const targetVol = _xfSavedVol || audio.volume || 1;
-  audio.volume = 0;
-  const startTime = performance.now();
-  const duration = 1500; // 1.5s fade-in (quicker to feel responsive)
-  function fade() {
-    const elapsed = performance.now() - startTime;
-    const progress = Math.min(1, elapsed / duration);
-    // Ease-in curve
-    audio.volume = targetVol * (progress * progress);
-    if (progress < 1) {
-      requestAnimationFrame(fade);
-    } else {
-      audio.volume = targetVol;
-      xfadeTimeout = null;
-    }
-  }
-  requestAnimationFrame(fade);
+  // Called from play event — trigger fade in if crossfade just advanced
+  if (xfadeTimeout === 'done') _xfDoFadeIn();
 }
 
 function cycleSpeed() {
@@ -4099,15 +4081,6 @@ function renderSettings() {
     <div>🎤 ${new Set(library.map(t => t.artist)).size} artiste(s)</div>
     <div>📂 ${playlists.length} playlist(s)</div>
   `;
-  const xfToggle = $('xfade-toggle');
-  xfToggle.checked = isCrossfade;
-  xfToggle.addEventListener('change', e => {
-    isCrossfade = e.target.checked;
-    const btn = $('fp-xfade');
-    if (btn) btn.classList.toggle('lit', isCrossfade);
-    toast(isCrossfade ? '🔊 CrossFade activé (5s)' : '🔇 CrossFade désactivé');
-    savePref();
-  });
   $('spatial-toggle').addEventListener('change', e => {
     if (e.target.checked) enableSpatialAudio();
     else disableSpatialAudio();
