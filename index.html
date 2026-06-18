@@ -2877,7 +2877,7 @@ function renderPlaylists() {
 /* FAVORITES */
 function renderFavorites() {
   const favs=library.filter(t=>t.favorite);
-  const artUrl = favs[0] ? blobURLs[favs[0].id]?.artURL : null;
+  const artUrl = _favCoverURL || (favs[0] ? blobURLs[favs[0].id]?.artURL : null);
   const artEl = artUrl ? `<img src="${artUrl}" alt="" onerror="imgErr(this)">` :
     `<div class="pd-art-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>`;
   const totalDur = favs.reduce((s,t) => s + (t.duration||0), 0);
@@ -2917,7 +2917,7 @@ function _shuffleFavorites() {
 }
 function renderTopSongs() {
   const top = _getTopSongs(50);
-  const artUrl = top[0] ? blobURLs[top[0].id]?.artURL : null;
+  const artUrl = _topCoverURL || (top[0] ? blobURLs[top[0].id]?.artURL : null);
   const artEl = artUrl ? `<img src="${artUrl}" alt="" onerror="imgErr(this)">` :
     `<div class="pd-art-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>`;
   const totalDur = top.reduce((s,t) => s + (t.duration||0), 0);
@@ -2960,10 +2960,17 @@ function _openFavoritesMenu(e) {
     {label:'▶ Lire', action:()=>_playAllFavorites()},
     {label:'🔀 Aléatoire', action:()=>_shuffleFavorites()},
     'sep',
+    {label:'🖼 Changer la cover', action:()=>{ const inp=document.getElementById('pl-cover-inp'); inp.dataset.plId='__favorites__'; inp.click(); }},
+    {label:'➕ Ajouter à une playlist', action:()=>{
+      const favs = library.filter(t=>t.favorite);
+      if(!favs.length){toast('Aucun favori');return;}
+      _addTracksToPlaylistModal(favs.map(t=>t.id));
+    }},
+    'sep',
     {label:'❌ Tout retirer des favoris', cls:'red', action:()=>{
       if (!confirm('Retirer tous les favoris ?')) return;
       library.forEach(t => { if(t.favorite) t.favorite = false; });
-      library.filter(t=>!t.favorite).forEach(t => dbGet(STORE_TRACKS, t.id).then(r => { if(r){r.favorite=false; dbPut(STORE_TRACKS,r);} }).catch(()=>{}));
+      library.forEach(t => { dbGet(STORE_TRACKS, t.id).then(r => { if(r){r.favorite=false; dbPut(STORE_TRACKS,r);} }).catch(()=>{}); });
       renderFavorites(); renderHome(); toast('Favoris vidés');
     }},
   ]);
@@ -2973,6 +2980,13 @@ function _openTopSongsMenu(e) {
     {label:'▶ Lire', action:()=>_playAllTopSongs()},
     {label:'🔀 Aléatoire', action:()=>_shuffleTopSongs()},
     'sep',
+    {label:'🖼 Changer la cover', action:()=>{ const inp=document.getElementById('pl-cover-inp'); inp.dataset.plId='__topsongs__'; inp.click(); }},
+    {label:'➕ Ajouter à une playlist', action:()=>{
+      const top = _getTopSongs(50);
+      if(!top.length){toast('Pas encore de données');return;}
+      _addTracksToPlaylistModal(top.map(t=>t.id));
+    }},
+    'sep',
     {label:'🔄 Réinitialiser les stats', cls:'red', action:()=>{
       if (!confirm('Réinitialiser toutes les statistiques d\'écoute ?')) return;
       _listenStats = {};
@@ -2980,6 +2994,20 @@ function _openTopSongsMenu(e) {
       renderTopSongs(); renderHome(); toast('Statistiques réinitialisées');
     }},
   ]);
+}
+function _addTracksToPlaylistModal(trackIds) {
+  if (!playlists.length) { toast('Crée d\'abord une playlist'); return; }
+  const opts = playlists.map(pl => `<button class="modal-btn secondary" onclick="_addToPlaylistConfirm('${pl.id}',${JSON.stringify(trackIds)});closeModal()">${esc(pl.name)}</button>`).join('');
+  openModal(`<div class="modal-title">Ajouter à…</div>${opts}<button class="modal-btn secondary" onclick="closeModal()" style="margin-top:8px">Annuler</button><div class="modal-pad"></div>`);
+}
+function _addToPlaylistConfirm(plId, trackIds) {
+  const pl = playlists.find(p=>p.id===plId);
+  if(!pl) return;
+  let added = 0;
+  trackIds.forEach(id => { if(!pl.trackIds.includes(id)){pl.trackIds.push(id);added++;} });
+  dbPut(STORE_PL, pl);
+  renderPlaylists(); renderSidebarPlaylists();
+  toast(`✅ ${added} titre${added!==1?'s':''} ajouté${added!==1?'s':''}`);
 }
 
 /* SIDEBAR PLAYLISTS */
@@ -3271,19 +3299,31 @@ function openPlaylistMenu(plId, event) {
 }
 
 // Playlist cover upload
+let _favCoverURL = null, _topCoverURL = null;
 document.addEventListener('change', function(e){
   if(e.target.id!=='pl-cover-inp')return;
   const file=e.target.files[0]; if(!file)return;
   const plId=e.target.dataset.plId;
-  const pl=playlists.find(p=>p.id===plId);
-  if(!pl)return;
   const reader=new FileReader();
   reader.onload=async function(ev){
-    pl.coverURL=ev.target.result;
-    await dbPut(STORE_PL, pl);
-    renderPlaylists(); renderSidebarPlaylists(); renderHome();
-    if(document.getElementById('view-pdtail')?.classList.contains('active')) openPlaylistDetail(plId);
-    toast('🖼 Cover mise à jour');
+    const dataUrl = ev.target.result;
+    if (plId === '__favorites__') {
+      _favCoverURL = dataUrl;
+      try { await dbPut(STORE_META, { data: dataUrl }, 'cover_favorites'); } catch(e){}
+      renderFavorites(); renderHome(); toast('🖼 Cover mise à jour');
+    } else if (plId === '__topsongs__') {
+      _topCoverURL = dataUrl;
+      try { await dbPut(STORE_META, { data: dataUrl }, 'cover_topsongs'); } catch(e){}
+      renderTopSongs(); renderHome(); toast('🖼 Cover mise à jour');
+    } else {
+      const pl=playlists.find(p=>p.id===plId);
+      if(!pl)return;
+      pl.coverURL=dataUrl;
+      await dbPut(STORE_PL, pl);
+      renderPlaylists(); renderSidebarPlaylists(); renderHome();
+      if(document.getElementById('view-pdtail')?.classList.contains('active')) openPlaylistDetail(plId);
+      toast('🖼 Cover mise à jour');
+    }
   };
   reader.readAsDataURL(file);
   e.target.value='';
@@ -4131,6 +4171,8 @@ async function init() {
   await loadPrefs();
   await loadLibrary();
   await _loadListenStats();
+  try { const r = await dbGet(STORE_META, 'cover_favorites'); if(r?.data) _favCoverURL = r.data; } catch(e){}
+  try { const r = await dbGet(STORE_META, 'cover_topsongs'); if(r?.data) _topCoverURL = r.data; } catch(e){}
 
   // Restore last session (track + queue)
   await restoreSession();
