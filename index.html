@@ -15,7 +15,7 @@
    DESIGN SYSTEM — LIQUID GLASS iOS 26 / APPLE MUSIC 2025
    ════════════════════════════════════════════════════════════ */
 :root {
-  --bg: #090909;
+  --bg: #000000;
   --surface: rgba(255,255,255,0.055);
   --surface2: rgba(255,255,255,0.09);
   --surface3: rgba(255,255,255,0.14);
@@ -898,6 +898,29 @@ body {
 .toast.out { animation:toastOut 0.25s var(--ease) forwards; }
 @keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.9)} }
 
+/* ── UPDATE BANNER (iOS notification style) ── */
+.update-banner {
+  position:fixed; top:env(safe-area-inset-top, 0); left:12px; right:12px; z-index:9999;
+  background:linear-gradient(135deg, rgba(40,40,45,0.95), rgba(30,30,35,0.98));
+  backdrop-filter:blur(30px) saturate(180%); -webkit-backdrop-filter:blur(30px) saturate(180%);
+  border:1px solid rgba(255,255,255,0.12); border-radius:16px;
+  padding:14px 16px; display:flex; align-items:center; gap:12px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+  animation:bannerIn 0.4s cubic-bezier(0.16,1,0.3,1);
+  margin-top:8px;
+}
+.update-banner .ub-icon {
+  width:36px; height:36px; border-radius:8px; background:var(--accent);
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.update-banner .ub-icon svg { width:20px; height:20px; fill:#fff; }
+.update-banner .ub-text { flex:1; }
+.update-banner .ub-title { font-size:13px; font-weight:700; color:#fff; }
+.update-banner .ub-msg { font-size:12px; color:rgba(255,255,255,0.6); margin-top:2px; }
+.update-banner.out { animation:bannerOut 0.3s ease forwards; }
+@keyframes bannerIn { from{opacity:0;transform:translateY(-100%)} to{opacity:1;transform:translateY(0)} }
+@keyframes bannerOut { to{opacity:0;transform:translateY(-100%)} }
+
 /* ── PROCESSING ── */
 #proc {
   position:fixed; inset:0; z-index:700;
@@ -1285,29 +1308,27 @@ body {
 
       <!-- FAVORITES -->
       <div class="view" id="view-favorites">
-        <div class="ph"><div class="ph-title">❤️ Favoris</div></div>
-        <div class="pd-play-header" style="padding:12px 20px;display:flex;gap:12px">
-          <button class="icon-btn" onclick="_playAllFavorites()" style="background:var(--accent);width:42px;height:42px;border-radius:50%">
-            <svg viewBox="0 0 24 24" fill="#fff" stroke="none" width="20"><polygon points="5,3 19,12 5,21"/></svg>
+        <div class="ph" style="background:transparent;backdrop-filter:none">
+          <button class="icon-btn" onclick="nav('home')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
-          <button class="icon-btn" onclick="_shuffleFavorites()" style="background:rgba(255,255,255,0.1);width:42px;height:42px;border-radius:50%">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" width="20"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-          </button>
+          <div style="font-size:16px;font-weight:700">Favoris</div>
+          <div style="width:36px"></div>
         </div>
+        <div id="favorites-hero"></div>
         <div id="favorites-list" class="tlist"></div>
       </div>
 
       <!-- TES SONS -->
       <div class="view" id="view-topsongs">
-        <div class="ph"><div class="ph-title">🔥 Tes sons</div></div>
-        <div class="pd-play-header" style="padding:12px 20px;display:flex;gap:12px">
-          <button class="icon-btn" onclick="_playAllTopSongs()" style="background:var(--accent);width:42px;height:42px;border-radius:50%">
-            <svg viewBox="0 0 24 24" fill="#fff" stroke="none" width="20"><polygon points="5,3 19,12 5,21"/></svg>
+        <div class="ph" style="background:transparent;backdrop-filter:none">
+          <button class="icon-btn" onclick="nav('home')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
-          <button class="icon-btn" onclick="_shuffleTopSongs()" style="background:rgba(255,255,255,0.1);width:42px;height:42px;border-radius:50%">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" width="20"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-          </button>
+          <div style="font-size:16px;font-weight:700">Tes sons</div>
+          <div style="width:36px"></div>
         </div>
+        <div id="topsongs-hero"></div>
         <div id="topsongs-list" class="tlist"></div>
       </div>
 
@@ -2852,6 +2873,27 @@ function renderPlaylists() {
 /* FAVORITES */
 function renderFavorites() {
   const favs=library.filter(t=>t.favorite);
+  const artUrl = favs[0] ? blobURLs[favs[0].id]?.artURL : null;
+  const artEl = artUrl ? `<img src="${artUrl}" alt="" onerror="imgErr(this)">` :
+    `<div class="pd-art-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>`;
+  const totalDur = favs.reduce((s,t) => s + (t.duration||0), 0);
+  $('favorites-hero').innerHTML = `
+    <div class="pd-hero">
+      <div class="pd-art">${artEl}</div>
+      <div class="pd-info">
+        <div class="pd-type">Collection</div>
+        <div class="pd-name">❤️ Favoris</div>
+        <div class="pd-meta">${favs.length} titre${favs.length!==1?'s':''} · ${fmt(totalDur)}</div>
+      </div>
+    </div>
+    <div class="pd-actions">
+      <button class="pd-btn play" onclick="_playAllFavorites()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Lecture
+      </button>
+      <button class="pd-btn shuf" onclick="_shuffleFavorites()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Aléatoire
+      </button>
+    </div>`;
   $('favorites-list').innerHTML = favs.length
     ? favs.map((t,i)=>trackItemHTML(t,i+1,false)).join('')
     : `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg><h3>Aucun favori</h3><p>Appuie sur ♥ pour ajouter</p></div>`;
@@ -2871,6 +2913,27 @@ function _shuffleFavorites() {
 }
 function renderTopSongs() {
   const top = _getTopSongs(50);
+  const artUrl = top[0] ? blobURLs[top[0].id]?.artURL : null;
+  const artEl = artUrl ? `<img src="${artUrl}" alt="" onerror="imgErr(this)">` :
+    `<div class="pd-art-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>`;
+  const totalDur = top.reduce((s,t) => s + (t.duration||0), 0);
+  $('topsongs-hero').innerHTML = `
+    <div class="pd-hero">
+      <div class="pd-art">${artEl}</div>
+      <div class="pd-info">
+        <div class="pd-type">Smart Mix</div>
+        <div class="pd-name">🔥 Tes sons</div>
+        <div class="pd-meta">${top.length} titre${top.length!==1?'s':''} · ${fmt(totalDur)}</div>
+      </div>
+    </div>
+    <div class="pd-actions">
+      <button class="pd-btn play" onclick="_playAllTopSongs()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Lecture
+      </button>
+      <button class="pd-btn shuf" onclick="_shuffleTopSongs()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Aléatoire
+      </button>
+    </div>`;
   $('topsongs-list').innerHTML = top.length
     ? top.map((t,i) => trackItemHTML(t, i+1, false)).join('')
     : `<div class="empty"><h3>Pas encore de données</h3><p>Écoute quelques morceaux et tes sons préférés apparaîtront ici</p></div>`;
@@ -3804,6 +3867,19 @@ function toast(msg, dur=2800) {
   wrap.appendChild(el);
   setTimeout(()=>{el.classList.add('out');el.addEventListener('animationend',()=>el.remove());},dur);
 }
+function _showUpdateBanner() {
+  const el = document.createElement('div');
+  el.className = 'update-banner';
+  el.innerHTML = `
+    <div class="ub-icon"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></div>
+    <div class="ub-text">
+      <div class="ub-title">Coco Music</div>
+      <div class="ub-msg">Mise à jour installée ✓</div>
+    </div>`;
+  el.onclick = () => { el.classList.add('out'); setTimeout(() => el.remove(), 400); };
+  document.body.appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, 4000);
+}
 
 // ─── PROCESSING ────────────────────────────────────────────
 function showProc(lbl,sub=''){$('proc').classList.add('on');$('proc-label').textContent=lbl;$('proc-sub').textContent=sub;$('proc-bar').style.width='0%';}
@@ -4049,15 +4125,13 @@ async function init() {
   // Register Service Worker for auto-updates
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').then(reg => {
-      // Check for updates periodically
-      setInterval(() => reg.update(), 60 * 1000); // every 60s
-      // Notify user when update is available
+      setInterval(() => reg.update(), 60 * 1000);
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
         if (!sw) return;
         sw.addEventListener('statechange', () => {
           if (sw.state === 'activated' && navigator.serviceWorker.controller) {
-            toast('🔄 Mise à jour installée — relance l\'app pour l\'appliquer');
+            _showUpdateBanner();
           }
         });
       });
