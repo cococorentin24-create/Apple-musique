@@ -3696,20 +3696,28 @@ document.querySelectorAll('.fp-tab').forEach(tab=>{
   });
 });
 
+let _lyrGen = 0; // generation counter to abort stale lyrics fetches
 async function renderLyrics() {
+  const gen = ++_lyrGen;
   const track = library[currentIdx];
   const el = $('fp-lyr-content');
   if (!track) { el.innerHTML = ''; return; }
+  // Stop any running sync from previous track
+  if (lrcInterval) { cancelAnimationFrame(lrcInterval); lrcInterval = null; }
   let lrc = lrcData[track.id];
   // Auto-fetch lyrics from LRCLIB if not cached
   if (!lrc || !lrc.length) {
     el.innerHTML = `<div class="lyr-loading">Recherche des paroles...</div>`;
     lrc = await _fetchLyricsLRCLIB(track);
+    // Abort if track changed while fetching
+    if (gen !== _lyrGen) return;
     if (lrc && lrc.length) {
       lrcData[track.id] = lrc;
       try { await dbPut(STORE_META, { data: lrc }, 'lrc_' + track.id); } catch(e) {}
     }
   }
+  // Final safety check — track might have changed
+  if (gen !== _lyrGen) return;
   if (lrc && lrc.length) {
     el.innerHTML = lrc.map((l, i) =>
       `<div class="lyr-line" data-lyr-idx="${i}" data-time="${l.time}" onclick="audio.currentTime=${l.time}">${esc(l.text) || '♪'}</div>`
