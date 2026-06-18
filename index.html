@@ -1984,7 +1984,61 @@ function cycleRepeat() {
 }
 
 function toggleCrossfade() {
-  toast('CrossFade indisponible');
+  isCrossfade = !isCrossfade;
+  const btn = $('fp-xfade');
+  if (btn) btn.classList.toggle('lit', isCrossfade);
+  toast(isCrossfade ? '🔊 CrossFade activé' : '🔇 CrossFade désactivé');
+  if (isCrossfade) _startXfadeMonitor();
+  else { if(xfadeTimeout){clearTimeout(xfadeTimeout);xfadeTimeout=null;} }
+  savePref();
+}
+let _xfadeInterval = null;
+function _startXfadeMonitor() {
+  if (_xfadeInterval) return;
+  _xfadeInterval = setInterval(() => {
+    if (!isCrossfade || !isPlaying || !audio.duration || isNaN(audio.duration)) return;
+    const remaining = audio.duration - audio.currentTime;
+    if (remaining <= XFADE && remaining > 0 && !xfadeTimeout) {
+      _performCrossfade();
+    }
+  }, 500);
+}
+function _performCrossfade() {
+  if (xfadeTimeout) return;
+  // Check if there's a next track
+  if (queue.length === 0 || (queueIdx >= queue.length - 1 && repeatMode !== 1)) return;
+  xfadeTimeout = 'active';
+  const fadeSteps = 20;
+  const fadeInterval = (XFADE * 1000) / fadeSteps;
+  const savedVol = audio.volume;
+  let step = 0;
+  const fadeOut = setInterval(() => {
+    step++;
+    audio.volume = Math.max(0, savedVol * (1 - step / fadeSteps));
+    if (step >= fadeSteps) {
+      clearInterval(fadeOut);
+      audio.volume = savedVol;
+      xfadeTimeout = null;
+      // Advance to next track (which will fade in)
+      _xfadeFadeIn = true;
+      nextTrack();
+    }
+  }, fadeInterval);
+}
+let _xfadeFadeIn = false;
+function _doFadeIn() {
+  if (!_xfadeFadeIn) return;
+  _xfadeFadeIn = false;
+  const targetVol = audio.volume;
+  audio.volume = 0;
+  const fadeSteps = 15;
+  const fadeInterval = 80;
+  let step = 0;
+  const fadeIn = setInterval(() => {
+    step++;
+    audio.volume = Math.min(targetVol, targetVol * (step / fadeSteps));
+    if (step >= fadeSteps) { clearInterval(fadeIn); audio.volume = targetVol; }
+  }, fadeInterval);
 }
 
 function cycleSpeed() {
@@ -2004,6 +2058,8 @@ function openAirPlay() {
 // ─── AUDIO EVENTS ──────────────────────────────────────────
 audio.addEventListener('ended', () => {
   if (_sleepStopped || _userPaused) { _sleepStopped = false; return; }
+  // If crossfade already triggered the transition, don't double-advance
+  if (isCrossfade && xfadeTimeout) return;
   setTimeout(()=>nextTrack(), 50);
 });
 
@@ -2025,6 +2081,7 @@ audio.addEventListener('play', () => {
   updateArtState();
   if('mediaSession' in navigator) navigator.mediaSession.playbackState='playing';
   unlockSilent();
+  _doFadeIn();
   // Request PiP so audio survives iOS background (same as YouTube)
   requestBackgroundPiP();
 });
@@ -3895,7 +3952,7 @@ function closeModal() { $('modal-ov').classList.remove('open'); }
 async function savePref() {
   try {
     await dbPut(STORE_META, {
-      isShuffle,repeatMode,eqEnabled,eqVals,sortMode,playSpeed
+      isShuffle,repeatMode,eqEnabled,eqVals,sortMode,playSpeed,isCrossfade
     }, 'prefs');
   } catch(e){}
 }
@@ -3913,6 +3970,8 @@ async function loadPrefs() {
   eqVals=p.eqVals||[0,0,0,0,0,0,0,0,0,0];
   sortMode=p.sortMode||'dateAdded';
   playSpeed=p.playSpeed||1;
+  isCrossfade=p.isCrossfade||false;
+  if(isCrossfade) _startXfadeMonitor();
 }
 
 async function restoreSession() {
@@ -4189,9 +4248,10 @@ async function init() {
   adjustForKeyboard();
   checkInstallPrompt();
 
-  // Restore shuffle/repeat UI
+  // Restore shuffle/repeat/crossfade UI
   $('fp-shuf-btn').classList.toggle('lit',isShuffle);
   $('fp-shuf-btn').classList.toggle('dim',!isShuffle);
+  if($('fp-xfade')) $('fp-xfade').classList.toggle('lit',isCrossfade);
 
   // Greeting time-based
   const h=new Date().getHours();
