@@ -1225,6 +1225,7 @@ body {
         <div class="section" id="home-topsongs-section" style="display:none">
           <div class="section-hd">
             <div class="section-title">🔥 Tes sons</div>
+            <div class="section-more" onclick="nav('topsongs')">Voir tout</div>
           </div>
           <div class="hscroll" id="home-topsongs-row"></div>
         </div>
@@ -1285,7 +1286,29 @@ body {
       <!-- FAVORITES -->
       <div class="view" id="view-favorites">
         <div class="ph"><div class="ph-title">❤️ Favoris</div></div>
+        <div class="pd-play-header" style="padding:12px 20px;display:flex;gap:12px">
+          <button class="icon-btn" onclick="_playAllFavorites()" style="background:var(--accent);width:42px;height:42px;border-radius:50%">
+            <svg viewBox="0 0 24 24" fill="#fff" stroke="none" width="20"><polygon points="5,3 19,12 5,21"/></svg>
+          </button>
+          <button class="icon-btn" onclick="_shuffleFavorites()" style="background:rgba(255,255,255,0.1);width:42px;height:42px;border-radius:50%">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" width="20"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+          </button>
+        </div>
         <div id="favorites-list" class="tlist"></div>
+      </div>
+
+      <!-- TES SONS -->
+      <div class="view" id="view-topsongs">
+        <div class="ph"><div class="ph-title">🔥 Tes sons</div></div>
+        <div class="pd-play-header" style="padding:12px 20px;display:flex;gap:12px">
+          <button class="icon-btn" onclick="_playAllTopSongs()" style="background:var(--accent);width:42px;height:42px;border-radius:50%">
+            <svg viewBox="0 0 24 24" fill="#fff" stroke="none" width="20"><polygon points="5,3 19,12 5,21"/></svg>
+          </button>
+          <button class="icon-btn" onclick="_shuffleTopSongs()" style="background:rgba(255,255,255,0.1);width:42px;height:42px;border-radius:50%">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" width="20"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+          </button>
+        </div>
+        <div id="topsongs-list" class="tlist"></div>
       </div>
 
       <!-- PLAYLIST DETAIL -->
@@ -1686,7 +1709,7 @@ function buildQueue(trackId) {
   const ids = library.map(t=>t.id);
   if (isShuffle) {
     const others = ids.filter(id=>id!==trackId);
-    shuffle(others);
+    _weightedShuffle(others);
     queue = [trackId, ...others];
     queueIdx = 0;
   } else {
@@ -1700,6 +1723,26 @@ function shuffle(arr) {
     const j=Math.floor(Math.random()*(i+1));
     [arr[i],arr[j]]=[arr[j],arr[i]];
   }
+  return arr;
+}
+// Weighted shuffle: preferred tracks get a slight boost toward the front
+function _weightedShuffle(arr) {
+  if (!Object.keys(_listenStats).length) { shuffle(arr); return arr; }
+  const maxScore = Math.max(1, ...arr.map(id => _getTrackScore(id)));
+  // Assign weight: base 1.0 + up to 0.4 boost for top tracks
+  const weighted = arr.map(id => ({ id, w: 1 + (_getTrackScore(id) / maxScore) * 0.4 }));
+  // Weighted Fisher-Yates: higher weight = slightly more likely to be picked earlier
+  for (let i = weighted.length - 1; i > 0; i--) {
+    const totalW = weighted.slice(0, i + 1).reduce((s, x) => s + x.w, 0);
+    let r = Math.random() * totalW;
+    let pick = 0;
+    for (let j = 0; j <= i; j++) {
+      r -= weighted[j].w;
+      if (r <= 0) { pick = j; break; }
+    }
+    [weighted[i], weighted[pick]] = [weighted[pick], weighted[i]];
+  }
+  for (let i = 0; i < arr.length; i++) arr[i] = weighted[i].id;
   return arr;
 }
 
@@ -1729,16 +1772,17 @@ async function playById(trackId, resetQ=true) {
   // Get audio URL (reads from STORE_META — lightweight, no huge record load)
   let audioURL = await getAudioURL(trackId);
   if (gen !== _playGen) return; // stale — newer playById was called
-  // Always verify/refresh artwork — iOS Safari can purge blob data under memory pressure
-  try {
-    const stored = await dbGet(STORE_TRACKS, trackId);
-    if (gen !== _playGen) return;
-    if (stored?.artBlob) {
-      if (blobURLs[trackId]?.artURL) URL.revokeObjectURL(blobURLs[trackId].artURL);
-      if (!blobURLs[trackId]) blobURLs[trackId] = {};
-      blobURLs[trackId].artURL = URL.createObjectURL(stored.artBlob);
-    }
-  } catch(e) {}
+  // Refresh artwork if missing (data URLs are persistent, no iOS purge issue)
+  if (!blobURLs[trackId]?.artURL) {
+    try {
+      const stored = await dbGet(STORE_TRACKS, trackId);
+      if (gen !== _playGen) return;
+      if (stored?.artBlob) {
+        if (!blobURLs[trackId]) blobURLs[trackId] = {};
+        blobURLs[trackId].artURL = await _blobToDataURL(stored.artBlob);
+      }
+    } catch(e) {}
+  }
 
   if (!audioURL) {
     console.warn('No audioURL for', trackId);
@@ -2510,10 +2554,7 @@ const cleanName = n => n.replace(/\.[^/.]+$/,'').replace(/[-_]+/g,' ').replace(/
 
 // ─── LIBRARY LOAD ──────────────────────────────────────────
 async function loadLibrary() {
-  // Revoke old URLs
-  Object.values(blobURLs).forEach(u=>{
-    if(u.artURL) URL.revokeObjectURL(u.artURL);
-  });
+  // Art URLs are now data URLs (no revocation needed)
   // Preserve existing audio URLs (don't revoke — audio might be playing)
   const oldAudioURLs = {};
   Object.entries(blobURLs).forEach(([id, u]) => {
@@ -2531,17 +2572,22 @@ async function loadLibrary() {
     const tx = db.transaction(STORE_TRACKS, 'readonly');
     const store = tx.objectStore(STORE_TRACKS);
     const req = store.openCursor();
+    const artPromises = [];
     req.onsuccess = e => {
       const cursor = e.target.result;
-      if (!cursor) { resolve(); return; }
+      if (!cursor) {
+        // Wait for all art conversions then resolve
+        Promise.all(artPromises).then(resolve).catch(resolve);
+        return;
+      }
       const rec = cursor.value;
-      // Extract metadata only (no blobs in memory)
       const { audioBlob, artBlob, ...meta } = rec;
       library.push(meta);
-      // Create art URL if artBlob exists
       if (artBlob) {
-        blobURLs[rec.id] = blobURLs[rec.id] || {};
-        blobURLs[rec.id].artURL = URL.createObjectURL(artBlob);
+        artPromises.push(_blobToDataURL(artBlob).then(dataUrl => {
+          blobURLs[rec.id] = blobURLs[rec.id] || {};
+          blobURLs[rec.id].artURL = dataUrl;
+        }).catch(()=>{}));
       }
       cursor.continue();
     };
@@ -2615,7 +2661,12 @@ function refreshPlaylistDetail() {
 }
 
 /* HOME */
+let _renderHomeTimer = null;
 function renderHome() {
+  // Debounce: max once per 300ms to prevent rapid DOM recreation on iOS
+  if (_renderHomeTimer) return;
+  _renderHomeTimer = setTimeout(() => { _renderHomeTimer = null; }, 300);
+
   const h = new Date().getHours();
   const g = h<12?'Bonjour':h<18?'Bonne après-midi':'Bonsoir';
   $('home-greeting').textContent = g + ' 👋';
@@ -2805,6 +2856,38 @@ function renderFavorites() {
     ? favs.map((t,i)=>trackItemHTML(t,i+1,false)).join('')
     : `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg><h3>Aucun favori</h3><p>Appuie sur ♥ pour ajouter</p></div>`;
 }
+function _playAllFavorites() {
+  const favs = library.filter(t => t.favorite);
+  if (!favs.length) return;
+  queue = favs.map(t => t.id); queueIdx = 0; isShuffle = false;
+  playById(queue[0], false);
+}
+function _shuffleFavorites() {
+  const favs = library.filter(t => t.favorite);
+  if (!favs.length) return;
+  const ids = favs.map(t => t.id); shuffle(ids);
+  queue = ids; queueIdx = 0; isShuffle = true;
+  playById(queue[0], false);
+}
+function renderTopSongs() {
+  const top = _getTopSongs(50);
+  $('topsongs-list').innerHTML = top.length
+    ? top.map((t,i) => trackItemHTML(t, i+1, false)).join('')
+    : `<div class="empty"><h3>Pas encore de données</h3><p>Écoute quelques morceaux et tes sons préférés apparaîtront ici</p></div>`;
+}
+function _playAllTopSongs() {
+  const top = _getTopSongs(50);
+  if (!top.length) return;
+  queue = top.map(t => t.id); queueIdx = 0; isShuffle = false;
+  playById(queue[0], false);
+}
+function _shuffleTopSongs() {
+  const top = _getTopSongs(50);
+  if (!top.length) return;
+  const ids = top.map(t => t.id); shuffle(ids);
+  queue = ids; queueIdx = 0; isShuffle = true;
+  playById(queue[0], false);
+}
 
 /* SIDEBAR PLAYLISTS */
 function renderSidebarPlaylists() {
@@ -2972,11 +3055,32 @@ async function _refreshArtForTrack(trackId) {
   try {
     const rec = await dbGet(STORE_TRACKS, trackId);
     if (!rec?.artBlob) return null;
-    if (blobURLs[trackId]?.artURL) URL.revokeObjectURL(blobURLs[trackId].artURL);
     if (!blobURLs[trackId]) blobURLs[trackId] = {};
-    blobURLs[trackId].artURL = URL.createObjectURL(rec.artBlob);
+    blobURLs[trackId].artURL = await _blobToDataURL(rec.artBlob);
     return blobURLs[trackId].artURL;
   } catch(e) { return null; }
+}
+function _blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const tmpUrl = URL.createObjectURL(blob);
+    img.onload = () => {
+      URL.revokeObjectURL(tmpUrl);
+      const MAX = 200;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > MAX || h > MAX) {
+        const scale = MAX / Math.max(w, h);
+        w = Math.round(w * scale); h = Math.round(h * scale);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(tmpUrl); reject(); };
+    img.src = tmpUrl;
+  });
 }
 function cardHTML(t) {
   const artUrl=blobURLs[t.id]?.artURL;
@@ -3215,12 +3319,8 @@ function changeTrackArt(trackId) {
       if (!file) return;
       const buf = await file.arrayBuffer();
       const blob = new Blob([buf], { type: file.type || 'image/jpeg' });
-      if (blobURLs[trackId]) {
-        if (blobURLs[trackId].artURL) URL.revokeObjectURL(blobURLs[trackId].artURL);
-      } else {
-        blobURLs[trackId] = {};
-      }
-      blobURLs[trackId].artURL = URL.createObjectURL(blob);
+      if (!blobURLs[trackId]) blobURLs[trackId] = {};
+      blobURLs[trackId].artURL = await _blobToDataURL(blob);
       const rec = await dbGet(STORE_TRACKS, trackId);
       if (rec) {
         rec.artBlob = blob;
@@ -3252,7 +3352,6 @@ async function removeTrack(trackId) {
   await dbDel(STORE_META, 'audio_' + trackId).catch(()=>{});
   await dbDel(STORE_META, 'lrc_' + trackId).catch(()=>{});
   if(blobURLs[trackId]?.audioURL) URL.revokeObjectURL(blobURLs[trackId].audioURL);
-  if(blobURLs[trackId]?.artURL) URL.revokeObjectURL(blobURLs[trackId].artURL);
   delete blobURLs[trackId];
   const idx=library.findIndex(t=>t.id===trackId);
   library.splice(idx,1);
@@ -3410,6 +3509,8 @@ function nav(viewName) {
   if(viewName==='radio') renderRadio();
   if(viewName==='search'){ setTimeout(()=>$('search-inp').focus(),100); renderSearchSuggestions(); }
   if(viewName==='settings') renderSettings();
+  if(viewName==='topsongs') renderTopSongs();
+  if(viewName==='favorites') renderFavorites();
 }
 
 document.querySelectorAll('[data-nav]').forEach(el=>{
@@ -3608,15 +3709,29 @@ function _getTopSongs(limit) {
   const scored = library.map(t => {
     const s = _listenStats[t.id];
     if (!s || s.plays < 1) return null;
-    const recencyDays = Math.max(1, (now - (s.lastPlayed || 0)) / 86400000);
-    const recencyBonus = Math.max(0, 10 - recencyDays) * 2;
+    const daysSinceLast = (now - (s.lastPlayed || 0)) / 86400000;
+    // Temporal decay: old listens fade out (half-life ~42 days)
+    const decay = Math.exp(-daysSinceLast / 60);
+    const recentPlays = s.plays * decay;
+    const recencyBonus = Math.max(0, 14 - daysSinceLast) * 1.5;
     const avgTime = s.plays > 0 ? s.totalTime / s.plays : 0;
     const durRatio = t.duration > 0 ? Math.min(1, avgTime / t.duration) : 0.5;
-    const score = (s.plays * 3) + (durRatio * 8) + recencyBonus + (s.clicks * 0.5) - (s.skips * 2);
+    const score = (recentPlays * 3) + (durRatio * 8) + recencyBonus + (s.clicks * decay * 0.5) - (s.skips * 1.5);
     return { track: t, score };
   }).filter(Boolean);
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map(s => s.track);
+}
+function _getTrackScore(trackId) {
+  const t = library.find(x => x.id === trackId);
+  const s = _listenStats[trackId];
+  if (!s || !t || s.plays < 1) return 0;
+  const now = Date.now();
+  const daysSinceLast = (now - (s.lastPlayed || 0)) / 86400000;
+  const decay = Math.exp(-daysSinceLast / 60);
+  const avgTime = s.plays > 0 ? s.totalTime / s.plays : 0;
+  const durRatio = t.duration > 0 ? Math.min(1, avgTime / t.duration) : 0.5;
+  return (s.plays * decay * 3) + (durRatio * 8) + (s.clicks * decay * 0.5) - (s.skips * 1.5);
 }
 
 // ─── MODAL ─────────────────────────────────────────────────
@@ -3805,19 +3920,7 @@ window.addEventListener('beforeunload', () => { saveSession(); savePref(); if (c
 setInterval(() => { if (isPlaying && currentIdx >= 0) saveSession(); }, 30000);
 // Periodic listen stats save every 60s
 setInterval(() => { if (isPlaying && currentIdx >= 0 && library[currentIdx]) { _trackListenTime(library[currentIdx].id); _listenStartTime = Date.now(); _saveListenStats(); } }, 60000);
-// Periodic artwork health check — detects stale blob URLs on iOS (memory pressure while active)
-setInterval(() => {
-  if (currentIdx < 0 || !library[currentIdx]) return;
-  const el = $('fp-art-img');
-  if (el && el.style.display !== 'none' && el.src && el.naturalWidth === 0) {
-    _refreshArtForTrack(library[currentIdx].id).then(url => { if (url) { el.src = url; updatePlayerUI(); } });
-  }
-  const ppEl = $('pp-art-img');
-  if (ppEl && ppEl.style.display !== 'none' && ppEl.src && ppEl.naturalWidth === 0) {
-    const tid = library[currentIdx].id;
-    if (blobURLs[tid]?.artURL) ppEl.src = blobURLs[tid].artURL;
-  }
-}, 5000);
+// Art URLs are now data URLs — no periodic health check needed (immune to iOS blob purge)
 
 // ─── iOS BACKGROUND AUDIO ───────────────────────────────
 // Save position when going to background
@@ -3848,14 +3951,19 @@ async function _refreshAllArtwork() {
     const tx = db.transaction(STORE_TRACKS, 'readonly');
     const store = tx.objectStore(STORE_TRACKS);
     const req = store.openCursor();
+    const artPromises = [];
     req.onsuccess = e => {
       const cursor = e.target.result;
-      if (!cursor) { renderAll(); return; }
+      if (!cursor) {
+        Promise.all(artPromises).then(() => renderAll()).catch(() => renderAll());
+        return;
+      }
       const rec = cursor.value;
-      if (rec.artBlob) {
-        if (blobURLs[rec.id]?.artURL) URL.revokeObjectURL(blobURLs[rec.id].artURL);
-        if (!blobURLs[rec.id]) blobURLs[rec.id] = {};
-        blobURLs[rec.id].artURL = URL.createObjectURL(rec.artBlob);
+      if (rec.artBlob && !blobURLs[rec.id]?.artURL) {
+        artPromises.push(_blobToDataURL(rec.artBlob).then(dataUrl => {
+          if (!blobURLs[rec.id]) blobURLs[rec.id] = {};
+          blobURLs[rec.id].artURL = dataUrl;
+        }).catch(()=>{}));
       }
       cursor.continue();
     };
