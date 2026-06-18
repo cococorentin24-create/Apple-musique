@@ -1313,7 +1313,9 @@ body {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
           <div style="font-size:16px;font-weight:700">Favoris</div>
-          <div style="width:36px"></div>
+          <button class="icon-btn" onclick="_openFavoritesMenu(event)">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
         </div>
         <div id="favorites-hero"></div>
         <div id="favorites-list" class="tlist"></div>
@@ -1326,7 +1328,9 @@ body {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
           <div style="font-size:16px;font-weight:700">Tes sons</div>
-          <div style="width:36px"></div>
+          <button class="icon-btn" onclick="_openTopSongsMenu(event)">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
         </div>
         <div id="topsongs-hero"></div>
         <div id="topsongs-list" class="tlist"></div>
@@ -2950,6 +2954,32 @@ function _shuffleTopSongs() {
   const ids = top.map(t => t.id); shuffle(ids);
   queue = ids; queueIdx = 0; isShuffle = true;
   playById(queue[0], false);
+}
+function _openFavoritesMenu(e) {
+  ctx(e, [
+    {label:'▶ Lire', action:()=>_playAllFavorites()},
+    {label:'🔀 Aléatoire', action:()=>_shuffleFavorites()},
+    'sep',
+    {label:'❌ Tout retirer des favoris', cls:'red', action:()=>{
+      if (!confirm('Retirer tous les favoris ?')) return;
+      library.forEach(t => { if(t.favorite) t.favorite = false; });
+      library.filter(t=>!t.favorite).forEach(t => dbGet(STORE_TRACKS, t.id).then(r => { if(r){r.favorite=false; dbPut(STORE_TRACKS,r);} }).catch(()=>{}));
+      renderFavorites(); renderHome(); toast('Favoris vidés');
+    }},
+  ]);
+}
+function _openTopSongsMenu(e) {
+  ctx(e, [
+    {label:'▶ Lire', action:()=>_playAllTopSongs()},
+    {label:'🔀 Aléatoire', action:()=>_shuffleTopSongs()},
+    'sep',
+    {label:'🔄 Réinitialiser les stats', cls:'red', action:()=>{
+      if (!confirm('Réinitialiser toutes les statistiques d\'écoute ?')) return;
+      _listenStats = {};
+      _saveListenStats();
+      renderTopSongs(); renderHome(); toast('Statistiques réinitialisées');
+    }},
+  ]);
 }
 
 /* SIDEBAR PLAYLISTS */
