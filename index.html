@@ -1710,17 +1710,16 @@ async function playById(trackId, resetQ=true) {
   // Get audio URL (reads from STORE_META — lightweight, no huge record load)
   let audioURL = await getAudioURL(trackId);
   if (gen !== _playGen) return; // stale — newer playById was called
-  // Get art URL if missing (reads from STORE_TRACKS — now lightweight, no audio blob)
-  if (!blobURLs[trackId]?.artURL) {
-    try {
-      const stored = await dbGet(STORE_TRACKS, trackId);
-      if (gen !== _playGen) return;
-      if (stored?.artBlob) {
-        if (!blobURLs[trackId]) blobURLs[trackId] = {};
-        blobURLs[trackId].artURL = URL.createObjectURL(stored.artBlob);
-      }
-    } catch(e) {}
-  }
+  // Always verify/refresh artwork — iOS Safari can purge blob data under memory pressure
+  try {
+    const stored = await dbGet(STORE_TRACKS, trackId);
+    if (gen !== _playGen) return;
+    if (stored?.artBlob) {
+      if (blobURLs[trackId]?.artURL) URL.revokeObjectURL(blobURLs[trackId].artURL);
+      if (!blobURLs[trackId]) blobURLs[trackId] = {};
+      blobURLs[trackId].artURL = URL.createObjectURL(stored.artBlob);
+    }
+  } catch(e) {}
 
   if (!audioURL) {
     console.warn('No audioURL for', trackId);
@@ -2916,10 +2915,39 @@ function playAlbumTracks(ids) {
 }
 
 /* HTML BUILDERS */
+const _ART_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" fill="%23282828"/><path d="M18 38V14l22-6v24" fill="none" stroke="%23555" stroke-width="2"/><circle cx="15" cy="38" r="4" fill="%23555"/><circle cx="37" cy="32" r="4" fill="%23555"/></svg>');
 function imgErr(el) {
-  // Replace broken image with inline SVG placeholder — no DOM insertion
-  el.removeAttribute('onerror'); // prevent infinite loop
-  el.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" fill="%23282828"/><path d="M18 38V14l22-6v24" fill="none" stroke="%23555" stroke-width="2"/><circle cx="15" cy="38" r="4" fill="%23555"/><circle cx="37" cy="32" r="4" fill="%23555"/></svg>');
+  el.removeAttribute('onerror');
+  const trackId = _findTrackIdForImg(el);
+  if (trackId) {
+    _refreshArtForTrack(trackId).then(newUrl => {
+      if (newUrl) { el.src = newUrl; el.onerror = function(){ this.removeAttribute('onerror'); this.src = _ART_PLACEHOLDER; }; }
+      else el.src = _ART_PLACEHOLDER;
+    }).catch(() => { el.src = _ART_PLACEHOLDER; });
+  } else {
+    el.src = _ART_PLACEHOLDER;
+  }
+}
+function _findTrackIdForImg(el) {
+  const item = el.closest('[data-id]');
+  if (item) return item.dataset.id;
+  const card = el.closest('[onclick]');
+  if (card) {
+    const m = card.getAttribute('onclick')?.match(/playById\(['"]([^'"]+)['"]\)/);
+    if (m) return m[1];
+  }
+  if (currentIdx >= 0 && library[currentIdx]) return library[currentIdx].id;
+  return null;
+}
+async function _refreshArtForTrack(trackId) {
+  try {
+    const rec = await dbGet(STORE_TRACKS, trackId);
+    if (!rec?.artBlob) return null;
+    if (blobURLs[trackId]?.artURL) URL.revokeObjectURL(blobURLs[trackId].artURL);
+    if (!blobURLs[trackId]) blobURLs[trackId] = {};
+    blobURLs[trackId].artURL = URL.createObjectURL(rec.artBlob);
+    return blobURLs[trackId].artURL;
+  } catch(e) { return null; }
 }
 function cardHTML(t) {
   const artUrl=blobURLs[t.id]?.artURL;
@@ -3654,6 +3682,19 @@ function closeMobileMore() { $('mobile-more-sheet').classList.remove('open'); }
 window.addEventListener('beforeunload', () => { saveSession(); savePref(); });
 // Periodic save every 30s while playing
 setInterval(() => { if (isPlaying && currentIdx >= 0) saveSession(); }, 30000);
+// Periodic artwork health check — detects stale blob URLs on iOS (memory pressure while active)
+setInterval(() => {
+  if (currentIdx < 0 || !library[currentIdx]) return;
+  const el = $('fp-art-img');
+  if (el && el.style.display !== 'none' && el.src && el.naturalWidth === 0) {
+    _refreshArtForTrack(library[currentIdx].id).then(url => { if (url) { el.src = url; updatePlayerUI(); } });
+  }
+  const ppEl = $('pp-art-img');
+  if (ppEl && ppEl.style.display !== 'none' && ppEl.src && ppEl.naturalWidth === 0) {
+    const tid = library[currentIdx].id;
+    if (blobURLs[tid]?.artURL) ppEl.src = blobURLs[tid].artURL;
+  }
+}, 5000);
 
 // ─── iOS BACKGROUND AUDIO ───────────────────────────────
 // Save position when going to background
@@ -3664,6 +3705,8 @@ document.addEventListener('visibilitychange', () => {
   } else {
     // App returning to foreground — reopen DB if iOS Safari closed it
     _dbReopen().catch(()=>{});
+    // Refresh all artwork blob URLs — iOS purges blob data when backgrounded
+    _refreshAllArtwork();
     // If user had paused or sleep stopped, iOS may auto-resume audio — force pause it
     if ((_userPaused || _sleepStopped) && !audio.paused) {
       audio.pause();
@@ -3677,6 +3720,24 @@ document.addEventListener('visibilitychange', () => {
     }
   }
 });
+async function _refreshAllArtwork() {
+  try {
+    const tx = db.transaction(STORE_TRACKS, 'readonly');
+    const store = tx.objectStore(STORE_TRACKS);
+    const req = store.openCursor();
+    req.onsuccess = e => {
+      const cursor = e.target.result;
+      if (!cursor) { renderAll(); return; }
+      const rec = cursor.value;
+      if (rec.artBlob) {
+        if (blobURLs[rec.id]?.artURL) URL.revokeObjectURL(blobURLs[rec.id].artURL);
+        if (!blobURLs[rec.id]) blobURLs[rec.id] = {};
+        blobURLs[rec.id].artURL = URL.createObjectURL(rec.artBlob);
+      }
+      cursor.continue();
+    };
+  } catch(e) {}
+}
 // Re-request PiP when returning to foreground
 if('pictureInPictureEnabled' in document) {
   document.addEventListener('visibilitychange', () => {
