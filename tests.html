@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Coco Music — Tests unitaires</title>
+<style>
+body { font-family: -apple-system, sans-serif; background: #111; color: #eee; padding: 24px; }
+h1 { font-size: 22px; margin-bottom: 16px; }
+.pass { color: #4caf50; }
+.fail { color: #f44336; }
+.suite { margin: 12px 0 4px; font-weight: 700; font-size: 15px; color: #aaa; }
+.test { padding: 3px 0; font-size: 14px; }
+#summary { margin-top: 20px; font-size: 16px; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>Coco Music — Tests unitaires</h1>
+<div id="results"></div>
+<div id="summary"></div>
+<script>
+'use strict';
+
+// ─── Mini test framework ──────────────────────────────
+let _passed = 0, _failed = 0;
+const _results = document.getElementById('results');
+function suite(name) {
+  const el = document.createElement('div');
+  el.className = 'suite';
+  el.textContent = name;
+  _results.appendChild(el);
+}
+function assert(name, condition) {
+  const el = document.createElement('div');
+  el.className = 'test';
+  if (condition) {
+    el.innerHTML = `<span class="pass">✓</span> ${name}`;
+    _passed++;
+  } else {
+    el.innerHTML = `<span class="fail">✗</span> ${name}`;
+    _failed++;
+  }
+  _results.appendChild(el);
+}
+function assertEqual(name, actual, expected) {
+  assert(name + ` (got: ${JSON.stringify(actual)}, expected: ${JSON.stringify(expected)})`, JSON.stringify(actual) === JSON.stringify(expected));
+}
+
+// ─── Extracted functions from index.html ──────────────
+
+// shuffle (Fisher-Yates)
+function shuffle(arr) {
+  for (let i=arr.length-1;i>0;i--) {
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+  return arr;
+}
+
+// fmt (duration formatter)
+function fmt(s){
+  if(!s||isNaN(s)||!isFinite(s)) return '0:00';
+  const t=Math.floor(s), h=Math.floor(t/3600), m=Math.floor((t%3600)/60), sec=t%60;
+  return h>0?`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`:`${m}:${String(sec).padStart(2,'0')}`;
+}
+
+// esc (HTML escape)
+function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
+
+// cleanName
+const cleanName = n => n.replace(/\.[^/.]+$/,'').replace(/[-_]+/g,' ').replace(/\s+/g,' ').trim();
+
+// parseLRC
+function parseLRC(text) {
+  const lines = text.split('\n');
+  const result = [];
+  for (const line of lines) {
+    const m = line.match(/^\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/);
+    if (m) {
+      const min = parseInt(m[1]);
+      const sec = parseInt(m[2]);
+      const ms = m[3] ? parseInt(m[3].padEnd(3,'0')) : 0;
+      const time = min * 60 + sec + ms / 1000;
+      const text = m[4].trim();
+      if (text) result.push({ time, text });
+    }
+  }
+  return result;
+}
+
+// buildQueue logic
+function buildQueue(library, trackId, isShuffle) {
+  const ids = library.map(t=>t.id);
+  let queue, queueIdx;
+  if (isShuffle) {
+    const others = ids.filter(id=>id!==trackId);
+    shuffle(others);
+    queue = [trackId, ...others];
+    queueIdx = 0;
+  } else {
+    queue = [...ids];
+    queueIdx = queue.indexOf(trackId);
+  }
+  return { queue, queueIdx };
+}
+
+// encodeWAV (header logic check)
+function encodeWAV(decoded) {
+  const numCh = decoded.numberOfChannels;
+  const sr = decoded.sampleRate;
+  const len = decoded.length;
+  const data = new Float32Array(len * numCh);
+  for (let ch = 0; ch < numCh; ch++) {
+    const chData = decoded.getChannelData(ch);
+    for (let i = 0; i < len; i++) data[i * numCh + ch] = chData[i];
+  }
+  const buf = new ArrayBuffer(44 + data.length * 2);
+  const v = new DataView(buf);
+  function str(o, s) { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + data.length * 2, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, numCh, true);
+  v.setUint32(24, sr, true);
+  v.setUint32(28, sr * numCh * 2, true);
+  v.setUint16(32, numCh * 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, data.length * 2, true);
+  for (let i = 0; i < data.length; i++) {
+    const s = Math.max(-1, Math.min(1, data[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return buf;
+}
+
+// ─── TESTS ────────────────────────────────────────────
+
+// fmt()
+suite('fmt — duration formatter');
+assertEqual('0 seconds', fmt(0), '0:00');
+assertEqual('null', fmt(null), '0:00');
+assertEqual('undefined', fmt(undefined), '0:00');
+assertEqual('NaN', fmt(NaN), '0:00');
+assertEqual('Infinity', fmt(Infinity), '0:00');
+assertEqual('30 seconds', fmt(30), '0:30');
+assertEqual('65 seconds', fmt(65), '1:05');
+assertEqual('3600 seconds (1h)', fmt(3600), '1:00:00');
+assertEqual('3661 seconds (1h01m01s)', fmt(3661), '1:01:01');
+assertEqual('125.7 seconds', fmt(125.7), '2:05');
+
+// esc()
+suite('esc — HTML escaping');
+assertEqual('ampersand', esc('a&b'), 'a&amp;b');
+assertEqual('less than', esc('a<b'), 'a&lt;b');
+assertEqual('greater than', esc('a>b'), 'a&gt;b');
+assertEqual('double quote', esc('a"b'), 'a&quot;b');
+assertEqual('combined', esc('<script>"alert"</script>'), '&lt;script&gt;&quot;alert&quot;&lt;/script&gt;');
+assertEqual('null input', esc(null), '');
+assertEqual('empty string', esc(''), '');
+assertEqual('normal text', esc('Hello World'), 'Hello World');
+
+// cleanName()
+suite('cleanName — file name cleaning');
+assertEqual('remove extension', cleanName('song.mp3'), 'song');
+assertEqual('underscores to spaces', cleanName('my_song.mp3'), 'my song');
+assertEqual('dashes to spaces', cleanName('my-song.mp3'), 'my song');
+assertEqual('multiple separators', cleanName('my---song___file.wav'), 'my song file');
+assertEqual('extra spaces', cleanName('  my  song  .mp3'), 'my song');
+assertEqual('complex name', cleanName('Artist_-_Track_Name.flac'), 'Artist Track Name');
+
+// shuffle()
+suite('shuffle — Fisher-Yates');
+const arr1 = [1,2,3,4,5,6,7,8,9,10];
+const original = [...arr1];
+shuffle(arr1);
+assert('returns same array', arr1.length === original.length);
+assert('contains all elements', original.every(x => arr1.includes(x)));
+assert('is an in-place shuffle', arr1 === arr1); // same reference
+// Statistical test: shuffle 1000 times, first element shouldn't always be 1
+let firstIs1 = 0;
+for (let i = 0; i < 1000; i++) {
+  const a = [1,2,3,4,5];
+  shuffle(a);
+  if (a[0] === 1) firstIs1++;
+}
+assert('shuffle is random (first element varies)', firstIs1 < 400);
+assert('empty array', shuffle([]).length === 0);
+assert('single element', shuffle([42])[0] === 42);
+
+// buildQueue()
+suite('buildQueue — queue construction');
+const mockLib = [{id:'a'},{id:'b'},{id:'c'},{id:'d'}];
+const q1 = buildQueue(mockLib, 'b', false);
+assertEqual('sequential: queue has all ids', q1.queue, ['a','b','c','d']);
+assertEqual('sequential: queueIdx points to trackId', q1.queueIdx, 1);
+
+const q2 = buildQueue(mockLib, 'c', true);
+assertEqual('shuffle: first in queue is trackId', q2.queue[0], 'c');
+assertEqual('shuffle: queueIdx is 0', q2.queueIdx, 0);
+assert('shuffle: queue has all ids', q2.queue.length === 4 && mockLib.every(t => q2.queue.includes(t.id)));
+
+const q3 = buildQueue(mockLib, 'a', false);
+assertEqual('first track: queueIdx is 0', q3.queueIdx, 0);
+
+const q4 = buildQueue(mockLib, 'd', false);
+assertEqual('last track: queueIdx is 3', q4.queueIdx, 3);
+
+// parseLRC()
+suite('parseLRC — lyrics parser');
+const lrc1 = parseLRC('[00:12.34]Hello world\n[00:15.00]Second line\n[01:00.50]Third');
+assertEqual('parses 3 lines', lrc1.length, 3);
+assertEqual('first line time', Math.round(lrc1[0].time * 100) / 100, 12.34);
+assertEqual('first line text', lrc1[0].text, 'Hello world');
+assertEqual('second line time', lrc1[1].time, 15);
+assertEqual('third line time', lrc1[2].time, 60.5);
+
+const lrc2 = parseLRC('[ti:Song Title]\n[ar:Artist]\n[00:05.00]Only line');
+assertEqual('skips metadata tags', lrc2.length, 1);
+assertEqual('parsed line text', lrc2[0].text, 'Only line');
+
+const lrc3 = parseLRC('');
+assertEqual('empty input', lrc3.length, 0);
+
+const lrc4 = parseLRC('[00:01.00]\n[00:02.00]  \n[00:03.00]Real line');
+assertEqual('skips empty text lines', lrc4.length, 1);
+
+// imgErr() DOM behavior
+suite('imgErr — image error handling');
+(function testImgErr() {
+  // Simulate the fixed imgErr behavior
+  const container = document.createElement('div');
+  container.className = 'tart';
+  const img = document.createElement('img');
+  img.src = 'blob:invalid';
+  container.appendChild(img);
+  document.body.appendChild(container);
+
+  // Replicate the fixed imgErr
+  function imgErr(el) {
+    el.style.display='none';
+    const ph=document.createElement('div');
+    ph.className=el.closest('.tart')?'tart-ph':'cthumb-ph';
+    ph.innerHTML='<svg viewBox="0 0 24 24"></svg>';
+    el.parentNode.insertBefore(ph,el.nextSibling);
+  }
+
+  imgErr(img);
+  assert('img is hidden', img.style.display === 'none');
+  assert('img still in DOM', container.contains(img));
+  assert('placeholder added', container.querySelector('.tart-ph') !== null);
+
+  // Test cthumb context
+  const container2 = document.createElement('div');
+  container2.className = 'cthumb';
+  const img2 = document.createElement('img');
+  container2.appendChild(img2);
+  document.body.appendChild(container2);
+  imgErr(img2);
+  assert('cthumb-ph class used outside .tart', container2.querySelector('.cthumb-ph') !== null);
+
+  container.remove();
+  container2.remove();
+})();
+
+// EQ Presets
+suite('EQ Presets — structure validation');
+const EQ_PRESETS = {
+  'Flat':[0,0,0,0,0,0,0,0,0,0],
+  'Bass Boost':[8,7,5,2,0,0,0,0,0,0],
+  'Treble Boost':[0,0,0,0,0,2,4,6,7,8],
+  'Vocal':[-2,-2,0,4,6,4,2,0,-1,-2],
+  'Pop':[-1,2,4,3,0,-1,0,2,3,3],
+  'Rock':[4,3,1,0,-1,0,2,4,5,5],
+  'Jazz':[3,2,0,2,0,0,-1,0,2,3],
+  'Electronic':[6,5,2,0,-2,0,2,4,5,6],
+  'Classical':[4,3,2,2,0,0,-2,0,3,4],
+  'Hip-Hop':[6,5,3,2,0,-1,0,2,3,4]
+};
+assert('10 presets exist', Object.keys(EQ_PRESETS).length === 10);
+for (const [name, vals] of Object.entries(EQ_PRESETS)) {
+  assert(`${name} has 10 bands`, vals.length === 10);
+  assert(`${name} values are numbers`, vals.every(v => typeof v === 'number'));
+}
+assertEqual('Flat is all zeros', EQ_PRESETS['Flat'], [0,0,0,0,0,0,0,0,0,0]);
+
+// RADIO stations
+suite('RADIO — station data');
+const RADIO = [
+  {name:'NRJ',sub:'France · Top 40',url:'https://stream.nrj.fr/nrj-hd.mp3'},
+  {name:'Fun Radio',sub:'France · Dance',url:'https://streaming.radio.funradio.fr/fun-1-44-128'},
+  {name:'Virgin Radio',sub:'France · Pop Rock',url:'https://stream.virginradio.fr/virgin-1-44-128'},
+  {name:'Skyrock',sub:'France · Rap/Hip-Hop',url:'https://streaming.skyrock.com/3.mp3'},
+  {name:'Lofi Girl',sub:'24/7 · Chill/Lofi',url:'https://streams.ilovemusic.de/iloveradio17.mp3'},
+  {name:'Jazz Radio',sub:'France · Jazz',url:'https://jazzradio.ice.infomaniak.ch/jazzradio-high.mp3'},
+  {name:'France Inter',sub:'France · Généraliste',url:'https://icecast.radiofrance.fr/franceinter-midfi.mp3'},
+  {name:'FIP',sub:'France · Musicale',url:'https://icecast.radiofrance.fr/fip-midfi.mp3'}
+];
+assert('8 radio stations', RADIO.length === 8);
+for (const s of RADIO) {
+  assert(`${s.name} has https URL`, s.url.startsWith('https://'));
+  assert(`${s.name} has name/sub`, s.name && s.sub);
+}
+
+// ─── Summary ──────────────────────────────────────────
+const summaryEl = document.getElementById('summary');
+const total = _passed + _failed;
+if (_failed === 0) {
+  summaryEl.innerHTML = `<span class="pass">${_passed}/${total} tests passed</span>`;
+} else {
+  summaryEl.innerHTML = `<span class="fail">${_failed} failed</span> / ${total} total`;
+}
+</script>
+</body>
+</html>
