@@ -1,7 +1,7 @@
 // Coco Music Service Worker — auto-update without data loss
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 const CACHE_NAME = 'coco-music-v' + CACHE_VERSION;
-const ASSETS = ['./index.html', './', './apple-touch-icon.png'];
+const ASSETS = ['./index.html', './', './manifest.json', './apple-touch-icon.png', './icon-192x192.png', './icon-512x512.png', './favicon-32x32.png', './favicon-16x16.png', './favicon.ico'];
 
 // Install: cache the app shell and activate immediately
 self.addEventListener('install', e => {
