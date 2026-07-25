@@ -5393,5 +5393,16 @@ init();
   </div>
 </div>
 
-<audio id="silent-audio" src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" loop playsinline></audio></body>
+<audio id="silent-audio" src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" loop playsinline></audio>
+<!-- INJECTION DU SERVICE WORKER POUR LE HORS LIGNE -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .then(() => console.log('Service Worker OK'))
+        .catch(err => console.error('Erreur SW:', err));
+    });
+  }
+</script>
+</body>
 </html>
