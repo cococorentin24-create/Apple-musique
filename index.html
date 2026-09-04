@@ -6568,6 +6568,42 @@ async function _gdriveUploadContentByHash(accessToken, folderId, fileName, blob,
 // parallèle (la latence réseau de l'une masque celle des autres) sans
 // changer la logique métier de chaque op individuelle ni l'ordre dans lequel
 // pushed=1 est écrit par op (chaque op reste indépendamment idempotente).
+// Verrou de fusion local par clé logique. Les opérations Drive peuvent arriver
+// en parallèle sur plusieurs workers ; deux créations du même morceau (même
+// contentHash) doivent être sérialisées autour du recheck IndexedDB et de la
+// matérialisation du record, sinon les deux workers voient l'absence du record
+// et créent chacun un doublon avant que l'autre n'ait écrit.
+const _gdriveMergeLockTails = new Map();
+async function _gdriveAcquireMergeLock(key) {
+  // Web Locks protège aussi deux onglets/instances du même navigateur. Le
+  // fallback mémoire conserve la protection dans les navigateurs plus anciens.
+  const lockName = 'musico-merge-' + key;
+  if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
+    let acquired;
+    const acquiredPromise = new Promise(resolve => { acquired = resolve; });
+    let releaseCurrent;
+    const held = new Promise(resolve => { releaseCurrent = resolve; });
+    const request = navigator.locks.request(lockName, { mode: 'exclusive' }, async () => {
+      acquired();
+      await held;
+    });
+    await acquiredPromise;
+    return () => { releaseCurrent(); request.catch(() => {}); };
+  }
+  const previous = _gdriveMergeLockTails.get(key) || Promise.resolve();
+  let releaseCurrent;
+  const current = new Promise(resolve => { releaseCurrent = resolve; });
+  const chain = previous.then(() => current);
+  _gdriveMergeLockTails.set(key, chain);
+  await previous;
+  return () => {
+    releaseCurrent();
+    chain.then(() => {
+      if (_gdriveMergeLockTails.get(key) === chain) _gdriveMergeLockTails.delete(key);
+    });
+  };
+}
+
 async function _gdriveMapConcurrent(items, limit, worker) {
   const results = new Array(items.length);
   let nextIndex = 0;
@@ -6739,14 +6775,17 @@ async function _gdrivePushPendingOps(accessToken, folderId) {
             // précis doit être réimporté depuis son fichier source.
             const attemptsKey = 'orphanAudioAttempts_' + op.opId;
             const attempts = ((await dbGetSyncMeta(attemptsKey).catch(() => null)) || 0) + 1;
-            if (attempts <= GDRIVE_ORPHAN_AUDIO_MAX_ATTEMPTS) {
-              await dbPutSyncMeta(attemptsKey, attempts).catch(() => {});
-              _gdriveLog('warn', `audio introuvable localement pour ${op.opId} (contentHash=${op.contentHash}) — tentative ${attempts}/${GDRIVE_ORPHAN_AUDIO_MAX_ATTEMPTS}, op RETENTÉE (pas encore poussée)`);
-              return; // laisse pushed=0 : cette op reste en attente, retentée au prochain push plutôt que de créer un fantôme immédiatement
-            }
-            await dbGetSyncMeta(attemptsKey).then(() => dbPutSyncMeta(attemptsKey, 0)).catch(() => {}); // reset pour ne pas garder ce compteur indéfiniment une fois abandonné
-            await _gdriveTrackAudioProblem(op.entityId, op.contentHash, 'jamais importé localement');
-            _gdriveLog('error', `audio introuvable localement pour ${op.opId} après ${GDRIVE_ORPHAN_AUDIO_MAX_ATTEMPTS} tentatives — métadonnées poussées SANS audio, Coco sera notifié`);
+            await dbPutSyncMeta(attemptsKey, attempts).catch(() => {});
+            await _gdriveTrackAudioProblem(op.entityId, op.contentHash, 'audio source absent — création bloquée');
+            _gdriveLog('warn', `audio introuvable localement pour ${op.opId} (contentHash=${op.contentHash}) — tentative ${attempts}, création BLOQUÉE pour éviter un morceau fantôme`);
+            // Intégrité prioritaire : tant que l’audio n’est pas disponible
+            // localement et absent de Drive, on ne pousse jamais l’opération
+            // __create seule. Les métadonnées seraient alors visibles sur les
+            // autres PWA comme un morceau illisible et ne pourraient jamais
+            // être réparées par un simple retry, puisque l’unique source
+            // d’audio manque. L’op reste pushed=0 et sera retentée quand le
+            // blob réapparaîtra ou qu’un autre appareil l’aura uploadé.
+            return;
           }
           // Si audioBlob est introuvable (cas limite : track supprimé
           // entre la création de l'op et le push, ou blob jamais écrit à
@@ -8092,7 +8131,17 @@ async function _gdriveApplyRemoteOp(accessToken, folderId, op) {
       let rec = await dbGet(STORE_TRACKS, effectiveLocalId);
       let isNewSkeleton = false;
 
-      if (!rec) {
+      let releaseTrackMergeLock = null;
+      if (!rec && op.contentHash) {
+        // Le recheck et la création doivent être atomiques au niveau logique
+        // de l’application. IndexedDB garantit chaque écriture individuelle,
+        // mais pas le cycle concurrent « lookup par hash → création ».
+        releaseTrackMergeLock = await _gdriveAcquireMergeLock('track:' + op.contentHash);
+        rec = await dbGetTrackByContentHash(op.contentHash).catch(() => null);
+        if (rec) meta.localId = rec.id;
+      }
+      try {
+        if (!rec) {
         // CORRECTIF DOUBLONS CROSS-DEVICE (bug racine des morceaux
         // dupliqués constaté en usage réel) : op.entityId est un id généré
         // LOCALEMENT par l'appareil source, sans aucune signification pour
@@ -8207,6 +8256,9 @@ async function _gdriveApplyRemoteOp(accessToken, folderId, op) {
             await _gdriveTrackMissingArt(op.entityId, op.contentHash);
           }
         }
+        }
+      } finally {
+        if (releaseTrackMergeLock) releaseTrackMergeLock();
       }
 
       let changed = isNewSkeleton;
